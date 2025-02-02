@@ -1,15 +1,15 @@
 # Protein Projects
 
 This project contains the backend of the following projects:
-    * PROFASA
-    * PS-GO
-    * ProteinFlow
+ * PROFASA
+ * PS-GO
+ * ProteinFlow
 
 
 Techniques used include:
-    * Gin (https://github.com/gin-gonic/gin)
-    * Gorm (https://github.com/go-gorm/gorm)
-    * MySQL
+ * Gin (https://github.com/gin-gonic/gin)
+ * Gorm (https://github.com/go-gorm/gorm)
+ * MySQL
 
 
 ## Available Scripts
