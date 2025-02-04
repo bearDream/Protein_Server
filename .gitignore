@@ -1,0 +1,6 @@
+/main
+/nohup.out
+/static/*
+/alphafold_input/*
+/alphafold_output/*
+/itasser_example/*
