@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"Protein_Server/logger"
 )
 
 // BLAST Processing
@@ -14,13 +15,13 @@ func BlastProcessing(sequence string) ([]string, []map[string]string) {
 	// Create a fasta.txt file
 	file, err := os.Create("fasta.txt")
 	if err != nil {
-		fmt.Println("Error creating file:", err)
+		logger.Error("创建文件失败: %v", err)
 		return nil, nil
 	}
 	// Write sequence to fasta.txt file
 	_, err = file.WriteString(sequence)
 	if err != nil {
-		fmt.Println("Error writing to file:", err)
+		logger.Error("写入文件失败: %v", err)
 		return nil, nil
 	}
 	file.Close()
@@ -31,7 +32,7 @@ func BlastProcessing(sequence string) ([]string, []map[string]string) {
 	cmd := "../RpsbProc-x64-linux/rpsblast -query fasta.txt -db ../RpsbProc-x64-linux/db/Cdd -evalue 0.01 -outfmt 11 -out fasta.asn"
 	err = exec.Command(cmd).Run()
 	if err != nil {
-		fmt.Println("Error running rpsblast:", err)
+		logger.Error("运行rpsblast失败: %v", err)
 		return nil, nil
 	}
 
@@ -44,13 +45,13 @@ func BlastProcessing(sequence string) ([]string, []map[string]string) {
 	cmd = "../RpsbProc-x64-linux/rpsbproc -i fasta.asn -o fasta.out -e 0.01 -m std -t doms"
 	err = exec.Command(cmd).Run()
 	if err != nil {
-		fmt.Println("Error running rpsbproc:", err)
+		logger.Error("运行rpsbproc失败: %v", err)
 		return nil, nil
 	}
 
 	results, err := parseFastaResult()
 	if err != nil {
-		fmt.Println("Error parsing rpsbproc result:", err)
+		logger.Error("解析rpsbproc结果失败: %v", err)
 		return nil, nil
 	}
 
@@ -60,12 +61,12 @@ func BlastProcessing(sequence string) ([]string, []map[string]string) {
 	for _, item := range results {
 		from, err := strconv.Atoi(item["From"])
 		if err != nil {
-			fmt.Println("Error parsing sub-sequence:", err)
+			logger.Error("解析子序列失败: %v", err)
 			continue
 		}
 		to, err := strconv.Atoi(item["To"])
 		if err != nil {
-			fmt.Println("Error parsing sub-sequence:", err)
+			logger.Error("解析子序列失败: %v", err)
 			continue
 		}
 		subSequence := sequence[from-1 : to]

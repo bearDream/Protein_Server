@@ -2,9 +2,9 @@ package services
 
 import (
 	"Protein_Server/database"
+	"Protein_Server/logger"
 	"Protein_Server/models"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,45 +22,21 @@ func NewItasserProcessor(maxWorkers int) *ItasserProcessor {
 }
 
 func (p *ItasserProcessor) Process() {
-	// Try to get the working slot
-	p.workerChan <- struct{}{}
-
-	// Finds the sequence waiting to be processed
-	result, err := p.findQueueItem()
-	if err != nil {
-		<-p.workerChan // Release slot
-		return
-	}
-
-	// Start the goroutine processing task
-	go func(id uint, sequence string) {
-		defer func() {
-			<-p.workerChan
-		}()
-
-		if !IsFasta(sequence) {
-			// Delete sequences that are not in FASTA format
-			if err := p.deleteFromQueue(id); err != nil {
-				log.Printf("Description Failed to delete the queue record: %v", err)
-			}
-			return
-		}
-
-		p.buildModel(id, sequence)
-	}(result.ID, result.Sequence)
+	// 这个方法现在由队列调度器管理，不再自动处理队列
+	logger.Info("I-TASSER处理器已就绪，等待队列调度器分配任务")
 }
 
 func (p *ItasserProcessor) buildModel(id uint, sequence string) {
 
 	// Empty the input folder
 	if err := os.RemoveAll("itasser_example/*"); err != nil {
-		log.Printf("Failed to empty the input folder: %v", err)
+		logger.Error("清空输入文件夹失败: %v", err)
 		return
 	}
 
 	// Create a FASTA file
 	if err := p.createFastaFile(sequence); err != nil {
-		log.Printf("Failed to create the FASTA file: %v", err)
+		logger.Error("创建FASTA文件失败: %v", err)
 		return
 	}
 
@@ -75,12 +51,12 @@ func (p *ItasserProcessor) buildModel(id uint, sequence string) {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("Executing I-Tasser failed: %v, Output: %s", err, output)
+		logger.Error("执行I-Tasser失败: %v, 输出: %s", err, output)
 		return
 	}
 
 	if err := p.processResult(id, sequence); err != nil {
-		log.Printf("Processing result failure: %v", err)
+		logger.Error("处理结果失败: %v", err)
 		return
 	}
 }
@@ -103,6 +79,9 @@ func (p *ItasserProcessor) processResult(id uint, seq string) error {
 
 	// Calculate parameters
 	CalculateProteinInfomatio(proteinInformation)
+
+	// Generate Ramachandran plot
+	Ramachandran(fmt.Sprintf("%d", proteinInformation.ID))
 
 	return nil
 }
@@ -136,12 +115,12 @@ func (p *ItasserProcessor) moveModelFile(id uint) error {
 
 func (p *ItasserProcessor) findQueueItem() (*models.ITasserQueue, error) {
 	var item models.ITasserQueue
-	if err := database.Database.First(&item).Error; err != nil {
+	if err := database.Database.Where("status = ?", "pending").First(&item).Error; err != nil {
 		return nil, err
 	}
 	return &item, nil
 }
 
 func (p *ItasserProcessor) deleteFromQueue(id uint) error {
-	return database.Database.Delete(&models.ITasserQueue{}, id).Error
+	return database.Database.Model(&models.ITasserQueue{}).Where("id = ?", id).Update("status", "completed").Error
 }

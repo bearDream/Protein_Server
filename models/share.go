@@ -6,8 +6,10 @@ import (
 
 type Share struct {
 	gorm.Model
-	TaskId   uint `gorm:"not null" form:"taskid" binding:"required"`
-	ToUserId uint `gorm:"not null" form:"touserid" binding:"required"`
+	TaskId   uint `gorm:"default:0" form:"taskid" binding:"required"`
+	ToUserId uint `gorm:"not null" form:"to_user_id" binding:"required"`
 	// 0 Undisposed; 1 agree; 2 reject
-	Status int64 `form:"status"`
+	Status int64 `gorm:"not null" form:"status"`
+	FromId uint `gorm:"not null" form:"from_id"`
+	SeqId  uint `gorm:"default:0" form:"seq_id"`
 }

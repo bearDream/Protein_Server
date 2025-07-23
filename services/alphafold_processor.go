@@ -2,9 +2,9 @@ package services
 
 import (
 	"Protein_Server/database"
+	"Protein_Server/logger"
 	"Protein_Server/models"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,73 +24,38 @@ func NewAlphaProcessor(maxWorkers int) *AlphaProcessor {
 	return processor
 }
 
-// Start processing
+// Start processing - 这个方法现在由队列调度器调用
 func (p *AlphaProcessor) Process() {
-	// Try to get the working slot
-	// if failed, stop
-	p.workerChan <- struct{}{}
-	// or go the next code
-
-	// Finds the sequence waiting to be processed
-	result, err := p.findQueueItem()
-	// If didn't find it because the queue was empty
-	if err != nil {
-		<-p.workerChan // Release slot
-		return
-	}
-
-	// Start the "goroutine processing" task
-	// Functions marked by Go are multithreaded
-	go func(id uint, sequence string) {
-		defer func() {
-			<-p.workerChan // Release the slot when finished
-		}()
-
-		if !IsFasta(sequence) {
-			// Delete sequences that are not in FASTA format
-			if err := p.deleteFromQueue(id); err != nil {
-				log.Printf("Description Failed to delete the queue record: %v", err)
-			}
-			return
-		}
-
-		// Build model
-		p.buildModel(id, sequence)
-	}(result.ID, result.Sequence)
+	// 这个方法现在由队列调度器管理，不再自动处理队列
+	logger.Info("AlphaFold处理器已就绪，等待队列调度器分配任务")
 }
 
 func (p *AlphaProcessor) buildModel(id uint, sequence string) {
 
 	// Empty the input folder
 	if err := os.RemoveAll("alphafold_input/*"); err != nil {
-		log.Printf("Failed to empty the input folder: %v", err)
+		logger.Error("清空输入文件夹失败: %v", err)
 		return
 	}
 
 	// Create a FASTA file
 	if err := p.createFastaFile(sequence); err != nil {
-		log.Printf("Failed to create the FASTA file: %v", err)
+		logger.Error("创建FASTA文件失败: %v", err)
 		return
 	}
 
 	// Run the AlphaFold command
-	cmd := exec.Command("bash", "../alphafold/run_alphafold.sh",
-		"-d", "../alphadata",
-		"-o", "./alphafold_output",
-		"-f", "./alphafold_input/query.fasta",
-		"-t", "2021-11-01",
-		"-g", "False",
-		"-c", "reduced_dbs")
+	cmd := exec.Command("bash", "-c", "source /root/miniconda3/etc/profile.d/conda.sh && conda activate alphafold && bash ../alphafold/run_alphafold.sh -d ../alphadata -o ./alphafold_output -f ./alphafold_input/query.fasta -t 2021-11-01 -g False -c reduced_dbs")
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("Executing AlphaFold failed: %v, Output: %s", err, output)
+		logger.Error("执行AlphaFold失败: %v, 输出: %s", err, output)
 		return
 	}
 
 	// Processing result
 	if err := p.processResult(id, sequence); err != nil {
-		log.Printf("Processing result failure: %v", err)
+		logger.Error("处理结果失败: %v", err)
 		return
 	}
 }
@@ -113,6 +78,9 @@ func (p *AlphaProcessor) processResult(id uint, seq string) error {
 
 	// Calculate parameters
 	CalculateProteinInfomatio(proteinInformation)
+
+	// Generate Ramachandran plot
+	Ramachandran(fmt.Sprintf("%d", proteinInformation.ID))
 
 	return nil
 }
@@ -146,14 +114,14 @@ func (p *AlphaProcessor) moveModelFile(id uint) error {
 
 func (p *AlphaProcessor) findQueueItem() (*models.AlphaFoldQueue, error) {
 	var item models.AlphaFoldQueue
-	if err := database.Database.First(&item).Error; err != nil {
+	if err := database.Database.Where("status = ?", "pending").First(&item).Error; err != nil {
 		return nil, err
 	}
 	return &item, nil
 }
 
 func (p *AlphaProcessor) deleteFromQueue(id uint) error {
-	return database.Database.Delete(&models.AlphaFoldQueue{}, id).Error
+	return database.Database.Model(&models.AlphaFoldQueue{}).Where("id = ?", id).Update("status", "completed").Error
 }
 
 func IsFasta(seq string) bool {

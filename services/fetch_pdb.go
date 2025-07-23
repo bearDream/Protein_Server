@@ -2,10 +2,10 @@ package services
 
 import (
 	"Protein_Server/database"
+	"Protein_Server/logger"
 	"Protein_Server/models"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +26,7 @@ func FetchPDB() {
 	// -------  get ids   -------
 	resp, err := resty.New().R().Get("https://data.rcsb.org/rest/v1/holdings/current/entry_ids")
 	if err != nil {
-		log.Println("Unable to make request: ", err)
+		logger.Error("无法发送请求: %v", err)
 		fetch_processing = false
 		return
 	}
@@ -34,7 +34,7 @@ func FetchPDB() {
 	//  -------  parse json  -------
 	var entry_ids []string
 	if err = json.Unmarshal(resp.Body(), &entry_ids); err != nil {
-		log.Println("Unable to parse json: ", err)
+		logger.Error("无法解析JSON: %v", err)
 		fetch_processing = false
 		return
 	}
@@ -49,7 +49,7 @@ func FetchPDB() {
 	for _, entry_id := range entry_ids {
 		var count int64
 		if err := database.Database.Model(&models.ProteinInformation{}).Where("pdb_id = ?", entry_id).Count(&count).Error; err != nil {
-			log.Println("Unable to find protein_information: ", err)
+			logger.Error("无法查找蛋白质信息: %v", err)
 		}
 		if count != 0 {
 			continue
@@ -66,12 +66,12 @@ func fetch_worker(jobs <-chan string) {
 		// get pdb
 		pdb_response, err := resty.New().R().Get("https://files.rcsb.org/view/" + j + ".pdb")
 		if err != nil {
-			log.Println("Unable to download pdb file: ", err)
+			logger.Error("无法下载PDB文件: %v", err)
 		} else {
 			// get fasta (sequence)
 			fasta_response, err := resty.New().R().Get("https://www.rcsb.org/fasta/entry/" + j + "/display")
 			if err != nil {
-				log.Println("Unable to download fasta file: ", err)
+				logger.Error("无法下载FASTA文件: %v", err)
 			} else {
 				// get first chain
 				lines := strings.Split(fasta_response.String(), "\n")
@@ -83,27 +83,27 @@ func fetch_worker(jobs <-chan string) {
 						PdbId:    j,
 					}
 					if err := database.Database.Create(&proteinInformation).Error; err != nil {
-						log.Println("Unable to create protein information: ", err)
+						logger.Error("无法创建蛋白质信息: %v", err)
 					} else {
 						// get protein img form pdb website directly
 						img_response, err := resty.New().R().Get("https://cdn.rcsb.org/images/structures/" + j + "_chain-A.jpeg")
 						if err != nil {
-							log.Println("Unable to download img file: ", err)
+							logger.Error("无法下载图片文件: %v", err)
 						}
 						// img's name is protein id name
 						// imgs be save to "static/imgs" folder
 						img_filename := filepath.Join("static/imgs", fmt.Sprintf("%d.jpg", proteinInformation.ID))
 						if err := os.WriteFile(img_filename, img_response.Body(), 0644); err != nil {
-							log.Println("Unable to save img file", err)
+							logger.Error("无法保存图片文件: %v", err)
 						}
 						// pdbs be save to "static/imgs" folder
 						pdb_filename := filepath.Join("static/models", fmt.Sprintf("%d.pdb", proteinInformation.ID))
 						if err := os.WriteFile(pdb_filename, pdb_response.Body(), 0644); err != nil {
-							log.Println("Unable to save pdb file", err)
+							logger.Error("无法保存PDB文件: %v", err)
 						}
-						fmt.Println("Downloaded", j)
+						logger.Info("已下载: %s", j)
 						CalculateProteinInfomatio(proteinInformation)
-						fmt.Println("Calculated", j)
+						logger.Info("已计算: %s", j)
 					}
 				}
 			}

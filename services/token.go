@@ -1,8 +1,8 @@
 package services
 
 import (
+	"Protein_Server/logger"
 	"Protein_Server/models"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -24,7 +24,7 @@ func GenerateToken(account *AccountClaims) string {
 	account.ExpiresAt = time.Now().Add(effectTime).Unix()
 	sign, err := jwt.NewWithClaims(jwt.SigningMethodHS256, account).SignedString(secret)
 	if err != nil {
-		fmt.Println(err.Error())
+		logger.Error("生成JWT令牌失败: %v", err)
 		return ""
 	}
 	// sign is a token string
@@ -62,7 +62,7 @@ func Refresh(tokenString string) string {
 		return secret, nil
 	})
 	if err != nil {
-		fmt.Println(err.Error())
+		logger.Error("解析JWT令牌失败: %v", err)
 	}
 	claims := token.Claims.(*AccountClaims)
 	jwt.TimeFunc = time.Now

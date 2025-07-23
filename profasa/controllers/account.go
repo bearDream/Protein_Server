@@ -4,54 +4,50 @@ import (
 	"Protein_Server/database"
 	"Protein_Server/models"
 	"Protein_Server/services"
-	"net/http"
-
+	"Protein_Server/utils"
 	"github.com/gin-gonic/gin"
+	"net/http"
 )
 
 func Register(c *gin.Context) {
 	var user models.User
 	// Bind automatically parses the input parameters of the api to variables using the form description in the struct
 	if err := c.Bind(&user); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Parameter error"})
+		utils.Error(c, 400, "Parameter error")
 		return
 	}
 	if err := database.Database.Create(&user).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "E-mail already exists"})
+		utils.Error(c, 400, "E-mail already exists")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"msg": "Registered successfully"})
+	utils.Success(c, nil, "Registered successfully")
 }
 
 func LogIn(c *gin.Context) {
 	var user models.User
 	// Bind automatically parses the input parameters of the api to variables using the form description in the struct
 	if err := c.Bind(&user); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Parameter error"})
+		utils.Error(c, 400, "Parameter error")
 		return
 	}
 	var count int64
 	if err := database.Database.Model(&models.User{}).Where("email=? and password=?", user.Email, user.Password).Count(&count).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		utils.Error(c, 400, err.Error())
 		return
 	}
 	if count == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "The account or password is incorrect"})
+		utils.Error(c, 400, "The account or password is incorrect")
 		return
 	}
 	// Return token
 	var claims services.AccountClaims
 	claims.User = user
 	token := services.GenerateToken(&claims)
-	c.JSON(http.StatusOK, gin.H{"token": token})
+	utils.Success(c, gin.H{"token": token}, "login success")
 }
 
 func ForgetPassword(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"msg": "Created successfully"})
-}
-
-func SendCode(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"msg": "Created successfully"})
+	utils.Success(c, nil, "Created successfully")
 }
 
 func GetUserInformation(c *gin.Context) {
@@ -59,18 +55,16 @@ func GetUserInformation(c *gin.Context) {
 	userByToken := account.(*services.AccountClaims).User
 	var user models.User
 	if err := database.Database.Where("email = ?", userByToken.Email).First(&user).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Failure to obtain information"})
+		utils.Error(c, 400, "Failure to obtain information")
 		return
 	}
 	// Processing the resulting data
 	result := map[string]interface{}{
-		"ID":        user.ID,
-		"CreatedAt": user.CreatedAt,
-		"UpdatedAt": user.UpdatedAt,
-		"Email":     user.Email,
-		"NewCount":  user.NewCount,
+		"id":       user.ID,
+		"email":    user.Email,
+		"newCount": user.NewCount,
 	}
-	c.JSON(http.StatusOK, gin.H{"data": result})
+	utils.Success(c, result, "ok")
 }
 
 func GetOtherUser(c *gin.Context) {
@@ -80,16 +74,39 @@ func GetOtherUser(c *gin.Context) {
 	// Look for emails other than myself
 	var users []models.User
 	if err := database.Database.Where("email <> ?", userByToken.Email).Find(&users).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		utils.Error(c, 400, err.Error())
 		return
 	}
 	// Processing the resulting data
 	results := make([]map[string]interface{}, 0)
 	for _, user := range users {
 		results = append(results, map[string]interface{}{
-			"ID":    user.ID,
-			"Email": user.Email,
+			"id":    user.ID,
+			"email": user.Email,
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"data": results})
+	utils.Success(c, results, "ok")
+}
+
+func GetAllUserNotMe(c *gin.Context) {
+	account, _ := c.Get("account")
+	userByToken := account.(*services.AccountClaims).User
+
+	var users []models.User
+	if err := database.Database.Where("id <> ?", userByToken.ID).Find(&users).Error; err != nil {
+		utils.Error(c, http.StatusInternalServerError, "Network error.")
+		return
+	}
+	if len(users) == 0 {
+		utils.Success(c, "error", "ok")
+		return
+	}
+	result := make([]map[string]interface{}, 0, len(users))
+	for _, user := range users {
+		result = append(result, map[string]interface{}{
+			"id":    user.ID,
+			"email": user.Email,
+		})
+	}
+	utils.Success(c, result, "ok")
 }

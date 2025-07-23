@@ -1,0 +1,11 @@
+INCREMENTING CHAIN (kadd) 1
+INCREMENTING CHAIN (kadd) 2
+INCREMENTING CHAIN (kadd) 3
+-18.497 -25.579 -15.763 46.646 30.722 42.355 
+Total frames: 537 P frames: 5 Number: 0.00931098696461825.
+Avg Probability 3.61872964415702
+# Overall quality factor: 99.06890130353817
+# Chain Label  A: Residue range 5 to 137
+# Chain Label  B: Residue range 10006 to 10142
+# Chain Label  C: Residue range 20005 to 20137
+# Chain Label  D: Residue range 30006 to 30142
