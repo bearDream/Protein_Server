@@ -24,26 +24,38 @@ func Register(c *gin.Context) {
 }
 
 func LogIn(c *gin.Context) {
-	var user models.User
+	var loginRequest models.User
 	// Bind automatically parses the input parameters of the api to variables using the form description in the struct
-	if err := c.Bind(&user); err != nil {
+	if err := c.Bind(&loginRequest); err != nil {
 		utils.Error(c, 400, "Parameter error")
 		return
 	}
-	var count int64
-	if err := database.Database.Model(&models.User{}).Where("email=? and password=?", user.Email, user.Password).Count(&count).Error; err != nil {
-		utils.Error(c, 400, err.Error())
+	
+	// 查找匹配邮箱和密码的用户
+	var users []models.User
+	if err := database.Database.Where("email = ? AND password = ?", loginRequest.Email, loginRequest.Password).Find(&users).Error; err != nil {
+		utils.Error(c, 500, "Network error.")
 		return
 	}
-	if count == 0 {
-		utils.Error(c, 400, "The account or password is incorrect")
+	
+	// 用户不存在
+	if len(users) == 0 {
+		utils.Error(c, 400, "Invalid email and/or password. Please try again.")
 		return
 	}
-	// Return token
+	
+	// 用户存在，生成 token
+	user := users[0]
 	var claims services.AccountClaims
 	claims.User = user
 	token := services.GenerateToken(&claims)
-	utils.Success(c, gin.H{"token": token}, "login success")
+	
+	// 返回与 Node.js 版本一致的数据结构
+	utils.Success(c, gin.H{
+		"id":    user.ID,
+		"email": user.Email,
+		"token": token,
+	}, "login success")
 }
 
 func ForgetPassword(c *gin.Context) {

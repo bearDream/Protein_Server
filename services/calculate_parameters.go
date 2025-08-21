@@ -89,6 +89,24 @@ var HydropathyValues = map[string]float64{
 	"V": 4.2,  // Valine
 }
 
+func CalcAllWithPath(sequence string, protein_id string) (rc, sa, ii, mw, h, ip float64) {
+	// rcScore - 使用 ./static/models 路径
+	rcPath := fmt.Sprintf("./static/models/%s.pdb", protein_id)
+	rc = CalcRcWithPath(rcPath)
+	// Solvent Accessibility
+	sa = CalcSa(rcPath)
+	// Instability
+	ii = CalcIi(sequence)
+	// Size（Molecular weight）
+	mw = CalcMw(sequence)
+	// Hydrophobicity
+	h = CalcH(sequence)
+	// Isoelectric Point
+	ip = CalcIp(sequence)
+	Ramachandran(protein_id)
+	return
+}
+
 func CalcAll(sequence string, protein_id string) (rc, sa, ii, mw, h, ip float64) {
 	// rcScore
 	rc = CalcRc(protein_id)
@@ -284,6 +302,26 @@ func CalcIp(fasta string) float64 {
 	}
 }
 
+func CalculateProteinInfomationWithPath(proteinInformation models.ProteinInformation) {
+	rc, sa, ii, mw, h, ip := CalcAllWithPath(proteinInformation.Sequence, fmt.Sprintf("%d", proteinInformation.ID))
+	proteinInformation.Hydrophobicity = fmt.Sprintf("%f", h)
+	proteinInformation.Instability = fmt.Sprintf("%f", ii)
+	proteinInformation.IsoelectricPoint = fmt.Sprintf("%f", ip)
+	proteinInformation.MolecularWeight = fmt.Sprintf("%f", mw)
+	proteinInformation.RcScore = fmt.Sprintf("%f", rc)
+	proteinInformation.SolventAccesibility = fmt.Sprintf("%f", sa)
+	
+	// 设置 PdbId 为蛋白质信息的 ID
+	proteinInformation.PdbId = fmt.Sprintf("%d", proteinInformation.ID)
+	
+	// Size 复用 MolecularWeight 的数据
+	proteinInformation.Size = fmt.Sprintf("%f", mw)
+	
+	if err := database.Database.Updates(&proteinInformation).Error; err != nil {
+		logger.Error("无法更新参数: %v", err)
+	}
+}
+
 func CalculateProteinInfomatio(proteinInformation models.ProteinInformation) {
 	rc, sa, ii, mw, h, ip := CalcAll(proteinInformation.Sequence, fmt.Sprintf("%d", proteinInformation.ID))
 	proteinInformation.Hydrophobicity = fmt.Sprintf("%f", h)
@@ -292,6 +330,13 @@ func CalculateProteinInfomatio(proteinInformation models.ProteinInformation) {
 	proteinInformation.MolecularWeight = fmt.Sprintf("%f", mw)
 	proteinInformation.RcScore = fmt.Sprintf("%f", rc)
 	proteinInformation.SolventAccesibility = fmt.Sprintf("%f", sa)
+	
+	// 设置 PdbId 为蛋白质信息的 ID
+	proteinInformation.PdbId = fmt.Sprintf("%d", proteinInformation.ID)
+	
+	// Size 复用 MolecularWeight 的数据
+	proteinInformation.Size = fmt.Sprintf("%f", mw)
+	
 	if err := database.Database.Updates(&proteinInformation).Error; err != nil {
 		logger.Error("无法更新参数: %v", err)
 	}

@@ -2,6 +2,7 @@ package utils
 
 import (
 	"github.com/gin-gonic/gin"
+	"net/http"
 )
 
 type Response struct {
@@ -11,9 +12,16 @@ type Response struct {
 }
 
 func Success(c *gin.Context, data interface{}, msg string) {
-	c.JSON(200, Response{Code: 200, Data: data, Message: msg})
+	c.IndentedJSON(http.StatusOK, gin.H{
+		"code":    200,
+		"data":    data,
+		"message": msg,
+	})
 }
 
 func Error(c *gin.Context, code int, msg string) {
-	c.JSON(200, Response{Code: code, Data: nil, Message: msg})
-} 
+	c.IndentedJSON(http.StatusOK, gin.H{
+		"code":    code,
+		"message": msg,
+	})
+}

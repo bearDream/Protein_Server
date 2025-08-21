@@ -14,14 +14,32 @@ func AddToAlphaFoldQueue(sequence string) {
 // Add To Alpha Fold Queue with parent ID
 func AddToAlphaFoldQueueWithParent(sequence string, parentId *int64) {
 	var alphafoldQueue models.AlphaFoldQueue
-	if err := database.Database.Where("sequence = ?", sequence).Find(&alphafoldQueue).Error; err != nil {
-		return
+	
+	// 构建查询条件
+	query := database.Database.Where("sequence = ?", sequence)
+	if parentId != nil {
+		query = query.Where("parent_id = ?", *parentId)
+	} else {
+		query = query.Where("parent_id IS NULL")
 	}
-	if alphafoldQueue.ID == 0 {
-		alphafoldQueue.Sequence = sequence
-		alphafoldQueue.ParentId = parentId
-		if err := database.Database.Create(&alphafoldQueue).Error; err != nil {
-			logger.Error("创建AlphaFold队列失败: %v", err)
+	
+	if err := query.First(&alphafoldQueue).Error; err != nil {
+		// 记录不存在，创建新记录
+		if err.Error() == "record not found" {
+			alphafoldQueue = models.AlphaFoldQueue{
+				Sequence: sequence,
+				ParentId: parentId,
+				Status:   "pending",
+			}
+			if err := database.Database.Create(&alphafoldQueue).Error; err != nil {
+				logger.Error("创建AlphaFold队列失败: %v", err)
+			} else {
+				logger.Info("已添加序列到AlphaFold队列，ID: %d", alphafoldQueue.ID)
+			}
+		} else {
+			logger.Error("查询AlphaFold队列失败: %v", err)
 		}
+	} else {
+		logger.Info("序列已存在于AlphaFold队列中，跳过添加，ID: %d", alphafoldQueue.ID)
 	}
 }

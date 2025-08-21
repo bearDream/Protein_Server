@@ -6,7 +6,7 @@ import (
 
 type ITasserQueue struct {
 	gorm.Model
-	Sequence string `gorm:"not null;uniqueIndex:uni_i_tasser_queues_sequence;type:varchar(191)" form:"sequence"`
+	Sequence string `gorm:"not null;type:text" form:"sequence"`
 	IsSubseq int64  `gorm:"not null;default:0" form:"is_subseq"`
 	ParentId *int64 `gorm:"default:null" form:"parent_id"`
 	Status   string `gorm:"not null;default:'pending'" form:"status"` // pending, processing, completed, failed

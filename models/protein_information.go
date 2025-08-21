@@ -18,4 +18,5 @@ type ProteinInformation struct {
 	PdbId               string  `gorm:"type:longtext" form:"pdbid"`
 	ParentId            uint    `gorm:"default:0;index:idx_protein_informations_parent_id" form:"parent_id"`
 	Duration            float64 `gorm:"default:0" form:"duration"`
+	StructureNum        int     `gorm:"default:0" form:"structure_num"` // RCSB PDB结构数量
 }

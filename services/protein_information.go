@@ -28,17 +28,25 @@ func ProteinInformationWithParent(sequence string, blastinformation string, stru
 			logger.Error("创建蛋白质信息失败: %v", err)
 			return
 		}
-		if structurePredictionTool == 3 {
-			// ESMFOld
-			ESMFold(sequence)
+		
+		// 将parentId转换为*int64类型以匹配队列函数参数
+		var parentIdPtr *int64
+		if parentId > 0 {
+			parentIdInt64 := int64(parentId)
+			parentIdPtr = &parentIdInt64
+		}
+		
+		if structurePredictionTool == 1 {
+			// AlphaFold2 (修复：使用正确的函数和ParentId)
+			AddToAlphaFoldQueueWithParent(sequence, parentIdPtr)
 		}
 		if structurePredictionTool == 2 {
-			// AlphaFold 2
-			AddToAlphaFoldQueue(sequence)
+			// I-Tasser (修复：使用正确的函数和ParentId)
+			AddToITasserQueueWithParent(sequence, parentIdPtr)
 		}
-		if structurePredictionTool == 1 {
-			// I-Tasser
-			AddToITasserQueue(sequence)
+		if structurePredictionTool == 3 {
+			// ESMFold
+			ESMFold(sequence)
 		}
 
 	}
