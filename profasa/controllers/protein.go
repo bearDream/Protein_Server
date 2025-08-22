@@ -7,6 +7,7 @@ import (
 	"Protein_Server/services"
 	"Protein_Server/utils"
 	"archive/zip"
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -318,6 +319,94 @@ func UploadPDB(c *gin.Context) {
 
 	// 返回文件路径
 	utils.Success(c, filePath, "File uploaded successfully")
+}
+
+// UploadFasta 上传FASTA文件并提取序列
+// POST /uploadfasta (multipart/form-data)
+func UploadFasta(c *gin.Context) {
+	// 获取上传的文件
+	file, err := c.FormFile("file")
+	if err != nil {
+		utils.Error(c, 400, "No file uploaded or file upload error")
+		return
+	}
+
+	// 检查文件扩展名
+	if !strings.HasSuffix(strings.ToLower(file.Filename), ".fasta") && !strings.HasSuffix(strings.ToLower(file.Filename), ".fa") {
+		utils.Error(c, 400, "Only FASTA files are allowed")
+		return
+	}
+
+	// 生成唯一的文件名（使用时间戳）
+	timestamp := time.Now().Unix()
+	filename := fmt.Sprintf("%d_%s", timestamp, file.Filename)
+
+	// 确保临时目录存在
+	tempDir := "temp/uploadfasta"
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		utils.Error(c, 500, "Failed to create temp directory")
+		return
+	}
+
+	// 构建文件保存路径
+	filePath := filepath.Join(tempDir, filename)
+
+	// 保存文件
+	if err := c.SaveUploadedFile(file, filePath); err != nil {
+		utils.Error(c, 500, "Failed to save file")
+		return
+	}
+
+	// 读取文件并提取序列
+	code, err := extractFastaSequence(filePath)
+	if err != nil {
+		utils.Error(c, 500, "Failed to read FASTA file")
+		return
+	}
+
+	// 删除临时文件
+	if err := os.Remove(filePath); err != nil {
+		logger.Error("Failed to delete temp file: %v", err)
+	}
+
+	// 返回序列内容
+	utils.Success(c, code, "FASTA sequence extracted successfully")
+}
+
+// extractFastaSequence 从FASTA文件中提取序列
+func extractFastaSequence(filePath string) (string, error) {
+	// 打开文件
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	// 创建读取器
+	reader := bufio.NewReader(file)
+	
+	var code strings.Builder
+	
+	// 逐行读取文件
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return "", err
+		}
+		
+		// 去除行尾的换行符
+		line = strings.TrimSpace(line)
+		
+		// 跳过以 ">" 开头的行（注释行）
+		if !strings.HasPrefix(line, ">") {
+			code.WriteString(line)
+		}
+	}
+	
+	return code.String(), nil
 }
 
 // PDB2X3D 将PDB文件转换为X3D格式
@@ -1150,6 +1239,26 @@ func GetPDBParameterList(c *gin.Context) {
 		sort,
 	)
 
+	if result.Error != "" {
+		utils.Error(c, 400, result.Error)
+		return
+	}
+
+	utils.Success(c, result.Data, "ok")
+}
+
+func CalcAllPDBParams(c *gin.Context) {
+	// 获取查询参数
+	batchSizeStr := c.DefaultQuery("batchSize", "100")
+	
+	// 转换批处理大小参数
+	batchSize, err := strconv.Atoi(batchSizeStr)
+	if err != nil || batchSize <= 0 {
+		utils.Error(c, 400, "Invalid batchSize parameter")
+		return
+	}
+
+	result := services.CalcAllPDBParams(batchSize)
 	if result.Error != "" {
 		utils.Error(c, 400, result.Error)
 		return

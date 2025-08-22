@@ -689,21 +689,21 @@ func GetBlastResult(idStr string) ([]BlastResultItem, error) {
 		// 对于fold任务，需要返回：
 		// 1. 输入序列（子序列，type=2）
 		// 2. fold结果序列（主序列，type=1）
-		
+
 		// 首先添加输入序列（子序列）
 		subSequenceIndex := 1
 		for _, proteinInfo := range proteinInfos {
 			if proteinInfo.ParentId != 0 {
 				// 为子序列生成标题
 				subTitle := fmt.Sprintf("%s (输入序列 %d)", mainTask.Title, subSequenceIndex)
-				
+
 				// 创建子序列结果项
 				item := createBlastResultItem(&proteinInfo, mainTask, 2, &subTitle)
 				result = append(result, item)
 				subSequenceIndex++
 			}
 		}
-		
+
 		// 然后添加fold结果序列（主序列）
 		var mainProteinInfo *models.ProteinInformation
 		for i := range proteinInfos {
@@ -712,7 +712,7 @@ func GetBlastResult(idStr string) ([]BlastResultItem, error) {
 				break
 			}
 		}
-		
+
 		if mainProteinInfo != nil {
 			// 添加fold结果序列
 			item := createBlastResultItem(mainProteinInfo, mainTask, 1, nil)
@@ -985,50 +985,32 @@ func UpdateTaskModelIdAfterAsyncCompletion(proteinInfoId uint) {
 
 // Fold 处理 fold 请求的主要函数
 func Fold(codes []string, title string, typeStr string, userId int64) FoldResponse {
+	logger.Info("Fold: 输入序列数量: %d", len(codes))
+
 	typeValue := BlastTypeStringToInt(typeStr)
 	if typeValue == 0 {
+		logger.Error("Fold: 无效的类型: %s", typeStr)
 		return FoldResponse{Error: "Invalid type."}
 	}
 
-	// 计算多个序列的最长公共子序列作为主序列
-	mainSequence := findLongestCommonSubsequence(codes)
+	// 将多个子序列连接作为主序列
+	mainSequence := strings.Join(codes, "")
+
 	if mainSequence == "" {
-		return FoldResponse{Error: "无法找到序列间的公共部分"}
+		return FoldResponse{Error: "连接后的序列为空"}
 	}
 
 	// 将多个序列合并为一个主序列（用于数据库存储）
 	codesString := strings.Join(codes, "|") // 子序列用"|"分割
+	logger.Info("Fold: 子序列字符串: %s", codesString)
 
-	// 先处理每个子序列，创建子序列的蛋白质信息记录
-	var subProteinInfos []models.ProteinInformation
-	for _, code := range codes {
-		// 查找子序列在 protein_information 表中是否存在
-		var subProteinInfo models.ProteinInformation
-		if err := database.Database.Where("sequence = ?", code).First(&subProteinInfo).Error; err != nil {
-			// 如果没找到，创建新记录（暂时不设置ParentId）
-			subProteinInfo = models.ProteinInformation{
-				Sequence: code,
-			}
-			if err := database.Database.Create(&subProteinInfo).Error; err != nil {
-				continue
-			}
-		}
-		subProteinInfos = append(subProteinInfos, subProteinInfo)
-	}
-
-	// 查找主序列（fold结果）在 protein_information 表中是否存在
+	// 查找主序列（连接后的序列）在 protein_information 表中是否存在
 	var mainProteinInfo models.ProteinInformation
-	if err := database.Database.Where("sequence = ?", mainSequence).First(&mainProteinInfo).Error; err != nil {
-		// 如果没找到，创建新记录
-		mainProteinInfo = models.ProteinInformation{
-			Sequence: mainSequence, // 使用fold结果作为主序列
-		}
-		if err := database.Database.Create(&mainProteinInfo).Error; err != nil {
-			return FoldResponse{Error: "创建主序列蛋白质信息失败"}
-		}
+	if err := database.Database.Where("sequence = ?", mainSequence).Find(&mainProteinInfo).Error; err != nil {
+		return FoldResponse{Error: "查询主序列蛋白质信息失败"}
 	}
 
-	// 查找主序列（fold结果）在所有队列中是否存在
+	// 查找主序列在所有队列中是否存在
 	var mainQueueCount int64
 	if err := database.Database.Model(&models.AlphaFoldQueue{}).Where("sequence = ?", mainSequence).Count(&mainQueueCount).Error; err != nil {
 		return FoldResponse{Error: "查询 AlphaFold 队列失败"}
@@ -1044,33 +1026,44 @@ func Fold(codes []string, title string, typeStr string, userId int64) FoldRespon
 		}
 	}
 
-	// 如果主序列（fold结果）既不在 protein_information 中也不在队列中，则添加到队列或同步处理
-	if mainQueueCount == 0 {
-		mainProteinInfoID := int64(mainProteinInfo.ID)
+	// 如果主序列既不在 protein_information 中也不在队列中，则添加到队列或同步处理
+	if mainProteinInfo.ID == 0 && mainQueueCount == 0 {
+		// 只有新序列才需要创建记录和添加到队列
 		if typeValue == 3 { // ESM - 同步处理
-			// 对ESM，直接创建蛋白质信息记录并同步处理
+			// 对ESM，先创建蛋白质信息记录
 			ProteinInformation(mainSequence, "", typeValue)
 			// 重新查询获取创建后的ID
-			if err := database.Database.Where("sequence = ?", mainSequence).First(&mainProteinInfo).Error; err != nil {
+			if err := database.Database.Where("sequence = ?", mainSequence).Find(&mainProteinInfo).Error; err != nil {
 				return FoldResponse{Error: "查询主序列蛋白质信息失败"}
 			}
 		} else {
-			// 对AlphaFold和I-Tasser，添加到队列
-			switch typeValue {
-			case 1: // AlphaFold
-				AddToAlphaFoldQueueWithParent(mainSequence, &mainProteinInfoID)
-			case 2: // I-Tasser
-				AddToITasserQueueWithParent(mainSequence, &mainProteinInfoID)
+			// 对AlphaFold和I-Tasser，先创建蛋白质信息记录，再添加到队列
+			ProteinInformation(mainSequence, "", typeValue)
+			// 重新查询获取创建后的ID
+			if err := database.Database.Where("sequence = ?", mainSequence).Find(&mainProteinInfo).Error; err != nil {
+				return FoldResponse{Error: "查询主序列蛋白质信息失败"}
 			}
 		}
+	} else if mainProteinInfo.ID == 0 {
+		// 如果蛋白质信息不存在但在队列中，仍需创建蛋白质信息记录
+		ProteinInformation(mainSequence, "", typeValue)
+		// 重新查询获取创建后的ID
+		if err := database.Database.Where("sequence = ?", mainSequence).Find(&mainProteinInfo).Error; err != nil {
+			return FoldResponse{Error: "查询主序列蛋白质信息失败"}
+		}
+	}
+
+	// 确保 mainProteinInfo.ID 不为0后创建主任务
+	if mainProteinInfo.ID == 0 {
+		return FoldResponse{Error: "无法获取主序列蛋白质信息ID"}
 	}
 
 	// 创建主任务（先不设置 ModelId，后续收集完所有 ID 后再更新）
 	mainTask := models.Task{
 		Title:                   title,
-		Sequence:                mainSequence, // 使用最长公共子序列
+		Sequence:                mainSequence, // 使用连接后的序列
 		SubSequence:             codesString,  // 子序列用"|"分割
-		Type:                    2, // Structure Prediction
+		Type:                    2,            // Structure Prediction
 		StructurePredictionTool: &typeValue,
 		UserId:                  userId,
 		ModelId:                 "", // 暂时为空，后续更新
@@ -1083,97 +1076,116 @@ func Fold(codes []string, title string, typeStr string, userId int64) FoldRespon
 	// 收集所有相关序列的 protein_information ID（包括主序列）
 	var allProteinIds []string
 	proteinIdSet := make(map[string]bool) // 使用map来去重
-	
+
 	// 添加主序列ID
 	mainIdStr := strconv.FormatUint(uint64(mainProteinInfo.ID), 10)
 	allProteinIds = append(allProteinIds, mainIdStr)
 	proteinIdSet[mainIdStr] = true
 
-	// 更新子序列的ParentId并处理队列
-	information := struct {
-		From int `json:"from"`
-		To   int `json:"to"`
-	}{
-		From: 1,
-		To:   1,
-	}
+	// 处理所有子序列，按照 Blast 函数的模式
+	for _, code := range codes {
+		// 查找子序列在 protein_information 表中是否存在
+		var subProteinInfo models.ProteinInformation
+		if err := database.Database.Where("sequence = ?", code).Find(&subProteinInfo).Error; err != nil {
+			continue
+		}
 
-	for _, subProteinInfo := range subProteinInfos {
+		// 查找子序列在所有队列中是否存在
+		var subQueueCount int64
+		if err := database.Database.Model(&models.AlphaFoldQueue{}).Where("sequence = ?", code).Count(&subQueueCount).Error; err != nil {
+			continue
+		}
+		if subQueueCount == 0 {
+			if err := database.Database.Model(&models.ITasserQueue{}).Where("sequence = ?", code).Count(&subQueueCount).Error; err != nil {
+				continue
+			}
+		}
+		if subQueueCount == 0 {
+			if err := database.Database.Model(&models.ESMQueue{}).Where("sequence = ?", code).Count(&subQueueCount).Error; err != nil {
+				continue
+			}
+		}
+
 		// 计算子序列在主序列中的位置
-		startPos := findSubsequencePosition(mainSequence, subProteinInfo.Sequence)
+		startPos := findSubsequencePosition(mainSequence, code)
+		information := struct {
+			From int `json:"from"`
+			To   int `json:"to"`
+		}{
+			From: 1,
+			To:   1,
+		}
 		if startPos >= 0 {
 			information.From = startPos + 1
-			information.To = startPos + len(subProteinInfo.Sequence)
+			information.To = startPos + len(code)
 		} else {
 			// 如果找不到精确匹配，使用默认位置
-			information.To = information.From + len(subProteinInfo.Sequence) - 1
+			information.To = information.From + len(code) - 1
 		}
-		
+
 		// 将位置信息转换为JSON字符串
 		informationJSON := ""
 		if infoJSON, err := json.Marshal(information); err == nil {
 			informationJSON = string(infoJSON)
 		}
 
-		// 更新子序列的ParentId和BlastInformation
-		if subProteinInfo.ParentId == 0 {
-			if err := database.Database.Model(&subProteinInfo).Updates(map[string]interface{}{
-				"parent_id":         mainProteinInfo.ID,
-				"blast_information": informationJSON,
-			}).Error; err != nil {
-				logger.Error("更新子序列信息失败: %v", err)
-				continue
-			}
-		} else {
-			// 如果ParentId已经存在，只更新BlastInformation
-			if err := database.Database.Model(&subProteinInfo).Update("blast_information", informationJSON).Error; err != nil {
-				logger.Error("更新子序列BlastInformation失败: %v", err)
-				continue
-			}
-		}
-		
-		// 添加子序列ID到列表中
-		subIdStr := strconv.FormatUint(uint64(subProteinInfo.ID), 10)
-		if !proteinIdSet[subIdStr] {
-			allProteinIds = append(allProteinIds, subIdStr)
-			proteinIdSet[subIdStr] = true
-		}
-
-		// 查找子序列在所有队列中是否存在
-		var subQueueCount int64
-		if err := database.Database.Model(&models.AlphaFoldQueue{}).Where("sequence = ?", subProteinInfo.Sequence).Count(&subQueueCount).Error; err != nil {
-			continue
-		}
-		if subQueueCount == 0 {
-			if err := database.Database.Model(&models.ITasserQueue{}).Where("sequence = ?", subProteinInfo.Sequence).Count(&subQueueCount).Error; err != nil {
-				continue
-			}
-		}
-		if subQueueCount == 0 {
-			if err := database.Database.Model(&models.ESMQueue{}).Where("sequence = ?", subProteinInfo.Sequence).Count(&subQueueCount).Error; err != nil {
-				continue
-			}
-		}
-
-		// 如果子序列不在队列中，则添加到队列或同步处理
-		if subQueueCount == 0 {
-			mainProteinInfoID := int64(mainProteinInfo.ID)
+		// 如果子序列既不在 protein_information 中也不在队列中，则处理
+		if subProteinInfo.ID == 0 && subQueueCount == 0 {
+			// 只有新序列才需要创建记录和添加到队列
 			if typeValue == 3 { // ESM - 同步处理
 				// 对ESM，直接创建蛋白质信息记录并同步处理
-				ProteinInformationWithParent(subProteinInfo.Sequence, "", typeValue, mainProteinInfo.ID)
+				ProteinInformationWithParent(code, informationJSON, typeValue, mainProteinInfo.ID)
 			} else {
-				// 对AlphaFold和I-Tasser，添加到队列
-				switch typeValue {
-				case 1: // AlphaFold
-					AddToAlphaFoldQueueWithParent(subProteinInfo.Sequence, &mainProteinInfoID)
-				case 2: // I-Tasser
-					AddToITasserQueueWithParent(subProteinInfo.Sequence, &mainProteinInfoID)
+				// 对AlphaFold和I-Tasser，先创建蛋白质信息记录
+				ProteinInformationWithParent(code, informationJSON, typeValue, mainProteinInfo.ID)
+			}
+			// 重新查询获取创建后的记录ID
+			if err := database.Database.Where("sequence = ?", code).Find(&subProteinInfo).Error; err == nil && subProteinInfo.ID > 0 {
+				idStr := strconv.FormatUint(uint64(subProteinInfo.ID), 10)
+				// 使用map去重，只有不存在的ID才添加
+				if !proteinIdSet[idStr] {
+					allProteinIds = append(allProteinIds, idStr)
+					proteinIdSet[idStr] = true
 				}
+			}
+		} else if subProteinInfo.ID == 0 {
+			// 如果蛋白质信息不存在但在队列中，仍需创建蛋白质信息记录
+			ProteinInformationWithParent(code, informationJSON, typeValue, mainProteinInfo.ID)
+			// 重新查询获取创建后的记录ID
+			if err := database.Database.Where("sequence = ?", code).Find(&subProteinInfo).Error; err == nil && subProteinInfo.ID > 0 {
+				idStr := strconv.FormatUint(uint64(subProteinInfo.ID), 10)
+				// 使用map去重，只有不存在的ID才添加
+				if !proteinIdSet[idStr] {
+					allProteinIds = append(allProteinIds, idStr)
+					proteinIdSet[idStr] = true
+				}
+			}
+		} else {
+			// 如果子序列已存在，更新其ParentId和BlastInformation
+			if subProteinInfo.ParentId == 0 {
+				if err := database.Database.Model(&subProteinInfo).Updates(map[string]interface{}{
+					"parent_id":         mainProteinInfo.ID,
+					"blast_information": informationJSON,
+				}).Error; err != nil {
+					logger.Error("更新子序列信息失败: %v", err)
+					continue
+				}
+			} else {
+				// 如果ParentId已经存在，只更新BlastInformation
+				if err := database.Database.Model(&subProteinInfo).Update("blast_information", informationJSON).Error; err != nil {
+					logger.Error("更新子序列BlastInformation失败: %v", err)
+					continue
+				}
+			}
+			// 直接添加其ID，不重复处理
+			idStr := strconv.FormatUint(uint64(subProteinInfo.ID), 10)
+			// 使用map去重，只有不存在的ID才添加
+			if !proteinIdSet[idStr] {
+				allProteinIds = append(allProteinIds, idStr)
+				proteinIdSet[idStr] = true
 			}
 		}
 
-		// 更新下一个子序列的起始位置
-		information.From = information.To + 1
 	}
 
 	// 更新主任务的 ModelId 字段
@@ -1194,88 +1206,6 @@ func Fold(codes []string, title string, typeStr string, userId int64) FoldRespon
 	}
 
 	return FoldResponse{ID: mainTask.ID}
-}
-
-// findLongestCommonSubsequence 找到多个序列的最长公共子序列
-func findLongestCommonSubsequence(sequences []string) string {
-	if len(sequences) == 0 {
-		return ""
-	}
-	if len(sequences) == 1 {
-		return sequences[0]
-	}
-
-	// 从第一个序列开始，逐步找到与其他序列的公共部分
-	result := sequences[0]
-	for i := 1; i < len(sequences); i++ {
-		result = findCommonSubsequence(result, sequences[i])
-		if result == "" {
-			return ""
-		}
-	}
-	return result
-}
-
-// findCommonSubsequence 找到两个序列的公共子序列
-func findCommonSubsequence(seq1, seq2 string) string {
-	if seq1 == "" || seq2 == "" {
-		return ""
-	}
-
-	// 如果两个序列完全相同，直接返回
-	if seq1 == seq2 {
-		return seq1
-	}
-
-	// 确定较短的序列和较长的序列
-	shorter, longer := seq2, seq1
-	if len(seq1) < len(seq2) {
-		shorter, longer = seq1, seq2
-	}
-
-	// 如果较长序列包含较短序列，则使用fold逻辑
-	if strings.Contains(longer, shorter) {
-		// 去掉较短序列的最后一个字符
-		shorterWithoutLast := shorter[:len(shorter)-1]
-		
-		// 寻找较短序列去掉最后字符后在较长序列中重复出现的部分
-		// 找到该部分在较短序列中的起始位置，然后从该位置取后缀
-		longest := ""
-		
-		// 从较短序列的每个位置开始，寻找在较长序列中重复出现的最长后缀
-		for i := 0; i < len(shorterWithoutLast); i++ {
-			suffix := shorterWithoutLast[i:]
-			// 检查这个后缀在较长序列中是否出现多次（至少2次）
-			count := strings.Count(longer, suffix)
-			if count >= 2 && len(suffix) > len(longest) {
-				longest = suffix
-			}
-		}
-		
-		if longest != "" {
-			return longest
-		}
-	}
-
-	// 如果不存在包含关系，寻找最长的公共子序列
-	longest := ""
-	for i := 0; i < len(seq1); i++ {
-		for j := 0; j < len(seq2); j++ {
-			// 找到匹配的起始位置
-			if seq1[i] == seq2[j] {
-				// 从当前位置开始，寻找最长的匹配
-				k := 0
-				for i+k < len(seq1) && j+k < len(seq2) && seq1[i+k] == seq2[j+k] {
-					k++
-				}
-				if k > len(longest) {
-					longest = seq1[i : i+k]
-				}
-			}
-		}
-	}
-
-	return longest
 }
 
 // findSubsequencePosition 找到子序列在主序列中的位置

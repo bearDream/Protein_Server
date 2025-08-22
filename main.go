@@ -40,6 +40,7 @@ func main() {
 	router.POST("/logIn", profasacontrollers.LogIn)
 	router.POST("/forgetpassword", profasacontrollers.ForgetPassword)
 	router.POST("/uploadPDB", profasacontrollers.UploadPDB)
+	router.POST("/uploadfasta", profasacontrollers.UploadFasta)
 	router.POST("/pdb2x3d", profasacontrollers.PDB2X3D)
 	router.POST("/pdb2obj", profasacontrollers.PDB2OBJ)
 	router.POST("/pdb2fbx", profasacontrollers.PDB2FBX)
@@ -48,6 +49,7 @@ func main() {
 	router.GET("/getPDBInformationById", profasacontrollers.GetPDBInformationById)
 	router.GET("/getSeqTimeTable", profasacontrollers.GetSeqTimeTable)
 	router.GET("/getPDBParameterList", profasacontrollers.GetPDBParameterList)
+	router.GET("/calcAllPDBparams", profasacontrollers.CalcAllPDBParams)
 
 	// 只对需要鉴权的接口加 JwtVerify
 	auth := router.Group("/")

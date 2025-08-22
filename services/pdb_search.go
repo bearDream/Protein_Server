@@ -2,6 +2,7 @@ package services
 
 import (
 	"Protein_Server/database"
+	"Protein_Server/logger"
 	"Protein_Server/models"
 	"fmt"
 	"os"
@@ -527,7 +528,8 @@ func GetPDBParameterList(
 	}
 
 	// 创建基础查询条件的副本，用于统计查询
-	baseQuery := database.Database.Model(&models.PDBParameter{}).Where("is_protein = ?", true)
+	// 确保只查询6个参数都不为空的数据
+	baseQuery := database.Database.Model(&models.PDBParameter{}).Where("is_protein = ? AND (rc_score IS NOT NULL AND rc_score != '' AND rc_score != '0' AND rc_score != 'null' AND rc_score != 'NULL' AND rc_score != 'None' AND rc_score != 'none') AND (solvent_accesibility IS NOT NULL AND solvent_accesibility != '' AND solvent_accesibility != '0' AND solvent_accesibility != 'null' AND solvent_accesibility != 'NULL' AND solvent_accesibility != 'None' AND solvent_accesibility != 'none') AND (hydrophobicity IS NOT NULL AND hydrophobicity != '' AND hydrophobicity != '0' AND hydrophobicity != 'null' AND hydrophobicity != 'NULL' AND hydrophobicity != 'None' AND hydrophobicity != 'none') AND (isoelectric_point IS NOT NULL AND isoelectric_point != '' AND isoelectric_point != '0' AND isoelectric_point != 'null' AND isoelectric_point != 'NULL' AND isoelectric_point != 'None' AND isoelectric_point != 'none') AND (instability IS NOT NULL AND instability != '' AND instability != '0' AND instability != 'null' AND instability != 'NULL' AND instability != 'None' AND instability != 'none') AND (size IS NOT NULL AND size != 0)", true)
 
 	// 应用所有筛选条件到基础查询
 	if pdbId != "" {
@@ -652,9 +654,9 @@ func GetPDBParameterList(
 		}
 	}
 
-	// 获取筛选条件下的记录总数（使用COUNT查询，避免拉取全量数据）
+	// 统计6个参数都不为空的数据量（rc_score, solvent_accesibility, hydrophobicity, isoelectric_point, instability, size）
 	var total int64
-	if err := baseQuery.Count(&total).Error; err != nil {
+	if err := database.Database.Model(&models.PDBParameter{}).Where("is_protein = ? AND (rc_score IS NOT NULL AND rc_score != '' AND rc_score != '0' AND rc_score != 'null' AND rc_score != 'NULL' AND rc_score != 'None' AND rc_score != 'none') AND (solvent_accesibility IS NOT NULL AND solvent_accesibility != '' AND solvent_accesibility != '0' AND solvent_accesibility != 'null' AND solvent_accesibility != 'NULL' AND solvent_accesibility != 'None' AND solvent_accesibility != 'none') AND (hydrophobicity IS NOT NULL AND hydrophobicity != '' AND hydrophobicity != '0' AND hydrophobicity != 'null' AND hydrophobicity != 'NULL' AND hydrophobicity != 'None' AND hydrophobicity != 'none') AND (isoelectric_point IS NOT NULL AND isoelectric_point != '' AND isoelectric_point != '0' AND isoelectric_point != 'null' AND isoelectric_point != 'NULL' AND isoelectric_point != 'None' AND isoelectric_point != 'none') AND (instability IS NOT NULL AND instability != '' AND instability != '0' AND instability != 'null' AND instability != 'NULL' AND instability != 'None' AND instability != 'none') AND (size IS NOT NULL AND size != 0)", true).Count(&total).Error; err != nil {
 		return GetPDBParameterListResult{Error: "Network error!"}
 	}
 
@@ -762,4 +764,105 @@ func GetPDBParameterList(
 	}
 
 	return GetPDBParameterListResult{Data: data}
+}
+
+// CalcAllPDBParamsResult 批量计算PDB参数的结果结构
+type CalcAllPDBParamsResult struct {
+	Data  map[string]interface{} `json:"data"`
+	Error string                 `json:"error"`
+}
+
+// CalcAllPDBParams 批量计算所有PDB参数的6个参数
+func CalcAllPDBParams(batchSize int) CalcAllPDBParamsResult {
+	logger.Info("[CalcAllPDBParams] 开始批量计算PDB参数，批处理大小: %d", batchSize)
+	
+	var totalProcessed int64 = 0
+	var totalCalculated int64 = 0
+	var totalSkipped int64 = 0
+	var totalErrors int64 = 0
+	
+	// 获取所有需要计算的记录
+	var allRecords []models.PDBParameter
+	if err := database.Database.Where("is_protein = ?", true).Find(&allRecords).Error; err != nil {
+		return CalcAllPDBParamsResult{Error: "Database query error: " + err.Error()}
+	}
+	
+	totalRecords := len(allRecords)
+	logger.Info("[CalcAllPDBParams] 找到 %d 条蛋白质记录需要处理", totalRecords)
+	
+	// 分批处理
+	for i := 0; i < totalRecords; i += batchSize {
+		end := i + batchSize
+		if end > totalRecords {
+			end = totalRecords
+		}
+		
+		batch := allRecords[i:end]
+		logger.Info("[CalcAllPDBParams] 处理批次 %d-%d (共 %d 条记录)", i+1, end, len(batch))
+		
+		// 处理当前批次
+		for _, record := range batch {
+			totalProcessed++
+			
+			// 检查PDB文件是否存在
+			pdbPath := fmt.Sprintf("../PROFASA-PDB-GO/data/%s.pdb", record.PdbId)
+			if _, err := os.Stat(pdbPath); os.IsNotExist(err) {
+				logger.Warn("[CalcAllPDBParams] PDB文件不存在，跳过: %s", pdbPath)
+				totalSkipped++
+				continue
+			}
+			
+			// 检查序列是否为空
+			if record.Fasta == "" {
+				logger.Warn("[CalcAllPDBParams] 序列为空，跳过: %s", record.PdbId)
+				totalSkipped++
+				continue
+			}
+			
+			// 计算6个参数
+			rc, sa, ii, mw, h, ip := CalcAllWithPath(record.Fasta, record.PdbId)
+			
+			// 更新记录
+			record.RcScore = fmt.Sprintf("%f", rc)
+			record.SolventAccesibility = fmt.Sprintf("%f", sa)
+			record.Instability = fmt.Sprintf("%f", ii)
+			record.Size = mw
+			record.Hydrophobicity = fmt.Sprintf("%f", h)
+			record.IsoelectricPoint = fmt.Sprintf("%f", ip)
+			
+			// 批量更新数据库
+			if err := database.Database.Model(&models.PDBParameter{}).Where("id = ?", record.ID).Updates(map[string]interface{}{
+				"rc_score":             record.RcScore,
+				"solvent_accesibility": record.SolventAccesibility,
+				"instability":          record.Instability,
+				"size":                 record.Size,
+				"hydrophobicity":       record.Hydrophobicity,
+				"isoelectric_point":    record.IsoelectricPoint,
+			}).Error; err != nil {
+				logger.Error("[CalcAllPDBParams] 更新记录失败: %s, 错误: %v", record.PdbId, err)
+				totalErrors++
+			} else {
+				totalCalculated++
+				logger.Info("[CalcAllPDBParams] 成功计算并更新: %s (rc: %.2f, sa: %.2f, ii: %.2f, mw: %.2f, h: %.4f, ip: %.2f)", 
+					record.PdbId, rc, sa, ii, mw, h, ip)
+			}
+		}
+		
+		// 每批次处理完后输出进度
+		progress := float64(totalProcessed) / float64(totalRecords) * 100
+		logger.Info("[CalcAllPDBParams] 进度: %.2f%% (%d/%d)", progress, totalProcessed, totalRecords)
+	}
+	
+	logger.Info("[CalcAllPDBParams] 批量计算完成 - 总计: %d, 成功: %d, 跳过: %d, 错误: %d", 
+		totalProcessed, totalCalculated, totalSkipped, totalErrors)
+	
+	result := map[string]interface{}{
+		"total_processed":  totalProcessed,
+		"total_calculated": totalCalculated,
+		"total_skipped":    totalSkipped,
+		"total_errors":     totalErrors,
+		"batch_size":       batchSize,
+	}
+	
+	return CalcAllPDBParamsResult{Data: result}
 }
